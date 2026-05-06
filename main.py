@@ -9,6 +9,7 @@ app = FastAPI()
 
 BOOKINGS_FILE = "bookings.json"
 
+
 # ---------- СОЗДАНИЕ ФАЙЛА ----------
 if not os.path.exists(BOOKINGS_FILE):
     with open(BOOKINGS_FILE, "w") as f:
@@ -23,8 +24,11 @@ class Booking(BaseModel):
 
 # ---------- ЗАГРУЗКА ----------
 def load_bookings():
-    with open(BOOKINGS_FILE, "r") as f:
-        return json.load(f)
+    try:
+        with open(BOOKINGS_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return []
 
 
 # ---------- СОХРАНЕНИЕ ----------
@@ -33,15 +37,24 @@ def save_bookings(data):
         json.dump(data, f, indent=2)
 
 
-# ---------- ПОЛУЧИТЬ ЗАНЯТЫЕ ДАТЫ ----------
+# ---------- ROOT (чтобы не было Not Found) ----------
+@app.get("/")
+def root():
+    return {"status": "API работает"}
+
+
+# ---------- ЗАНЯТЫЕ ДАТЫ ----------
 @app.get("/busy-dates")
 def get_busy_dates():
     bookings = load_bookings()
 
     dates = []
     for b in bookings:
-        d = f"{b['year']}-{str(b['month']).zfill(2)}-{str(b['day']).zfill(2)}"
-        dates.append(d)
+        try:
+            d = f"{b['year']}-{str(b['month']).zfill(2)}-{str(b['day']).zfill(2)}"
+            dates.append(d)
+        except:
+            continue
 
     return JSONResponse(dates)
 
@@ -51,9 +64,13 @@ def get_busy_dates():
 def create_booking(data: Booking):
     bookings = load_bookings()
 
+    # защита от кривых данных
+    if not data.checkin or not data.checkout:
+        return {"error": "Нет дат"}
+
     try:
-        start = datetime.fromisoformat(data.checkin).date()
-        end = datetime.fromisoformat(data.checkout).date()
+        start = datetime.fromisoformat(str(data.checkin)).date()
+        end = datetime.fromisoformat(str(data.checkout)).date()
     except:
         return {"error": "Неверный формат даты"}
 
@@ -69,10 +86,10 @@ def create_booking(data: Booking):
                 and b["month"] == current.month
                 and b["year"] == current.year
             ):
-                return {"error": "Даты уже заняты"}
+                return {"error": "Даты заняты"}
         current += timedelta(days=1)
 
-    # сохранение
+    # сохраняем
     current = start
     while current < end:
         bookings.append({
@@ -87,7 +104,23 @@ def create_booking(data: Booking):
     return {"status": "ok"}
 
 
-# ---------- ПРОВЕРКА ----------
-@app.get("/")
-def root():
-    return {"status": "API работает"}
+# ---------- УДАЛЕНИЕ БРОНИ (на будущее) ----------
+@app.post("/cancel")
+def cancel_booking(data: Booking):
+    bookings = load_bookings()
+
+    try:
+        start = datetime.fromisoformat(str(data.checkin)).date()
+        end = datetime.fromisoformat(str(data.checkout)).date()
+    except:
+        return {"error": "Ошибка даты"}
+
+    new_bookings = []
+    for b in bookings:
+        date = datetime(b["year"], b["month"], b["day"]).date()
+        if not (start <= date < end):
+            new_bookings.append(b)
+
+    save_bookings(new_bookings)
+
+    return {"status": "cancelled"}
